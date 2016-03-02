@@ -235,6 +235,12 @@ def _iterate_fields(condition, assign_vals, *fields):
         # If not a list, make it a list of identical values
         assign_vals = [assign_vals] * len(fields)
 
+    one_field = False
+    if len(fields) == 1:
+        fields = fields*2
+        assign_vals = assign_vals*2
+        one_field = True
+
     # Numpy array iteration with nditer has a convenient write mode, but it
     # would affect the input arrays, so copies were made earlier.
     for field_elems in np.nditer(fields, op_flags=['readwrite']):
@@ -258,4 +264,7 @@ def _iterate_fields(condition, assign_vals, *fields):
                     # filtering by atomic label (filter_by_atom), so that
                     # function manually sets 0 for that field.
 
-    return fields
+    if one_field:
+        return fields[0]
+    else:
+        return fields
