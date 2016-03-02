@@ -5,7 +5,7 @@ from warnings import warn
 from operator import attrgetter
 import os
 
-from .cube_helpers import GridError, GridField, _check_for_nans
+from .cube_helpers import GridError, GridField, Field, _check_for_nans
 from .rep_esp import calc_grid_field, calc_non_grid_field
 from .resp import NonGridField
 
@@ -31,8 +31,8 @@ def rms(true_field, rep_field, ignore_nans=False):
 
 
 def difference(field1, field2, relative=False, absolute=False,
-               check_nans=True):
-    _check_grids(field1, field2)
+               check_nans=True, ignore_nesting=False):
+    _check_grids(ignore_nesting, field1, field2)
     if check_nans:
         _check_fields_for_nans(field1, field2)
     # The first element contains information about whether the difference is
@@ -69,7 +69,7 @@ def _check_fields_for_nans(*fields):
         _check_for_nans(field.values)
 
 
-def _check_grids(field1, *fields):
+def _check_grids(ignore_nesting, field1, *fields):
     """Check if field grids or array dimensions match."""
     if not len(fields):
         warn('No fields to be compared! As this is a helper function, the '
@@ -87,6 +87,10 @@ def _check_grids(field1, *fields):
             except KeyError:
                 raise TypeError("Checking dimensions of type '{0}' is not "
                                 "supported.".format(type(field)))
+            if type(field) is np.ndarray and ignore_nesting:
+                # Only check the first dimension of the np.ndarray
+                if attrgetter(attr)(field1)[0] == attrgetter(attr)(field)[0]:
+                    return
             if attrgetter(attr)(field1) != attrgetter(attr)(field):
                 raise GridError("Grids or points of fields to be compared do "
                                 "not match.")
@@ -97,7 +101,8 @@ def _flatten_no_nans(ndarray_input):
     return [elem for elem in ndarray_input.flat if not np.isnan(elem)]
 
 
-def filter_by_dist(exclusion_dist, dist, *fields, assign_val=None):
+def filter_by_dist(exclusion_dist, dist, *fields, assign_val=None,
+                   ignore_nesting=False):
     """Filter the data points in input fields by their distances.
 
     This function takes any number of field-like objects, whose data points
@@ -128,10 +133,11 @@ def filter_by_dist(exclusion_dist, dist, *fields, assign_val=None):
     """
     condition = lambda elems: elems[0] <= exclusion_dist
     fields = [dist] + list(fields)
-    return _iterate_fields(condition, assign_val, *fields)
+    return _iterate_fields(condition, assign_val, ignore_nesting, *fields)
 
 
-def filter_by_atom(molecule, atom_label, method, *fields, assign_val=None):
+def filter_by_atom(molecule, atom_label, method, *fields, assign_val=None,
+                   ignore_nesting=False):
     # _iterate_fields will check grids anyway
     grid = fields[0].grid
     if method == 'dist':
@@ -156,10 +162,10 @@ def filter_by_atom(molecule, atom_label, method, *fields, assign_val=None):
     # general solution will be more elegant.
     assign_val = [assign_val]*len(fields)
     assign_val[0] = 0
-    return _iterate_fields(condition, assign_val, *fields)
+    return _iterate_fields(condition, assign_val, ignore_nesting, *fields)
 
 
-def skim(rand_skim, *fields, assign_val=None):
+def skim(rand_skim, *fields, assign_val=None, ignore_nesting=False):
     """Skim the number of data points in input fields.
 
     This function takes any number of field-like objects, whose data points
@@ -176,7 +182,7 @@ def skim(rand_skim, *fields, assign_val=None):
     ----------
     rand_skim : float
         A number between 0 and 1. The fraction of data points to be retained.
-    *fields : GridField or np.ndarray
+    *fields : Field or np.ndarray
         The objects containing the data points to be skimmed.
     assign_val : Optional
         The data points to be removed will be replaced by this value. Defaults
@@ -189,31 +195,30 @@ def skim(rand_skim, *fields, assign_val=None):
 
     """
     condition = lambda elems: random.random() > rand_skim
-    return _iterate_fields(condition, assign_val, *fields)
+    return _iterate_fields(condition, assign_val, ignore_nesting, *fields)
 
 
-def _iterate_fields(condition, assign_vals, *fields):
+def _iterate_fields(condition, assign_vals, ignore_nesting, *fields):
     """Iterate and remove corresponding elements in ndarrays.
 
     This function takes any number of field-like objects, whose data points
-    correspond to each other between the fields. It will remove the
-    corresponding data points from all the fields depending on whether the list
-    of corresponding data points satisfies the passed `condition` function. The
-    data points are not actually removed but replaced with a special value
-    `assign_vals`. The input objects are not affected, as new ndarrays are
-    returned.
+    correspond to each other between the fields. It will remove the values from
+    all the fields depending on whether each set of corresponding values
+    satisfies the passed `condition` function. The values are not actually
+    removed but replaced with a special value `assign_vals`. The input objects
+    are not affected, as new ndarrays are returned.
 
     Parameters
     ----------
     condition : bool
-        A function which takes the list of corresponding elements in the
+        A function which takes the list of corresponding values in the
         iterated fields and return a boolean value stating whether the list
         satisfies the condition.
     assign_vals
-        The data points to be removed will be replaced by this value. This
-        argument can be a single value or a list of the same length as the
-        number of fields passed to specify a different value for each field.
-    *fields : GridField or np.ndarray
+        The values to be removed will be replaced by this value. This argument
+        can be a single value or a list of the same length as the number of
+        fields passed to specify a different value for each field.
+    *fields : Field or np.ndarray
         The fields containing the data points to be iterated through.
 
     Returns
@@ -222,8 +227,8 @@ def _iterate_fields(condition, assign_vals, *fields):
         The transformed field values.
 
     """
-    _check_grids(*fields)
-    fields = [field.values.copy() if type(field) is GridField else field.copy()
+    _check_grids(ignore_nesting, *fields)
+    fields = [field.values.copy() if isinstance(field, Field) else field.copy()
               for field in fields]
 
     # Check if assign_vals is a list
